@@ -20,58 +20,33 @@ struct SearchView: View {
                     }
                 
                 Button("搜索") {
-                    print("DEBUG UI: 开始执行搜索点击事件")
-                    print("DEBUG UI: 启用的书源数量为: \(sourceStore.sources.filter { $0.enabled }.count)")
-                    Task {
-                        performSearch()
-                    }
+                    // 必须在 Task 外打印，确保 UI 响应第一时间可见
+                    print("DEBUG UI: 搜索按钮点击响应")
+                    print("DEBUG UI: 当前可用书源数: \(sourceStore.sources.filter { $0.enabled }.count)")
+                    performSearch()
                 }
                 .disabled(searchText.isEmpty || isSearching)
                 .keyboardShortcut(.defaultAction)
             }
             .padding()
-            .background(Color(NSColor.controlBackgroundColor)) // macOS style background for header
+            .background(Color(NSColor.controlBackgroundColor))
             
             Divider()
             
-            // Progress Bar
             if isSearching {
-                ProgressView()
-                    .progressViewStyle(.linear)
-                    .padding(.horizontal)
-                    .padding(.top, 4)
+                ProgressView().progressViewStyle(.linear).padding()
             }
             
-            // Content
-            if searchResults.isEmpty {
-                if isSearching {
-                    // While searching but empty results so far, show nothing or loading state
+            if searchResults.isEmpty && !isSearching {
+                VStack {
                     Spacer()
-                } else {
-                    // Not searching, empty results
-                    VStack {
-                        Spacer()
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 48))
-                            .foregroundColor(.secondary.opacity(0.5))
-                            .padding(.bottom)
-                        Text("搜搜看吧")
-                            .font(.title2)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                    }
+                    Image(systemName: "magnifyingglass").font(.system(size: 48)).foregroundColor(.secondary.opacity(0.5))
+                    Text("搜搜看吧").font(.title2).foregroundColor(.secondary)
+                    Spacer()
                 }
             } else {
                 List(searchResults) { book in
                     BookRowView(book: book)
-                        .contextMenu {
-                            Button {
-                                // Action to add to shelf
-                                print("Add \(book.name) to shelf")
-                            } label: {
-                                Label("加入书架", systemImage: "plus.circle")
-                            }
-                        }
                 }
                 .listStyle(.plain)
             }
@@ -79,23 +54,20 @@ struct SearchView: View {
         .navigationTitle("网络搜索")
     }
     
-    // MARK: - Actions
-    
     private func performSearch() {
         guard !searchText.isEmpty else { return }
         
-        // Reset state
         isSearching = true
         searchResults = []
-        
-        // Get enabled sources
         let enabledSources = sourceStore.sources.filter { $0.enabled }
         
-        // Start search stream
         Task {
+            print("DEBUG UI: 进入 Task，准备调用 searchModel")
             let stream = await searchModel.search(keyword: searchText, sources: enabledSources)
             
+            print("DEBUG UI: 开始迭代 AsyncStream")
             for await books in stream {
+                print("DEBUG UI: 收到 \(books.count) 本书籍更新")
                 await MainActor.run {
                     self.searchResults.append(contentsOf: books)
                 }
@@ -103,79 +75,8 @@ struct SearchView: View {
             
             await MainActor.run {
                 self.isSearching = false
+                print("DEBUG UI: 搜索彻底完成")
             }
         }
     }
-}
-
-// MARK: - Subviews
-
-struct BookRowView: View {
-    let book: Book
-    
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            // Cover Image
-            AsyncImage(url: URL(string: book.coverUrl ?? "")) { phase in
-                switch phase {
-                case .empty:
-                    Color.secondary.opacity(0.2)
-                case .success(let image):
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                case .failure:
-                    Color.secondary.opacity(0.2)
-                        .overlay(
-                            Image(systemName: "book.closed")
-                                .foregroundColor(.secondary)
-                        )
-                @unknown default:
-                    Color.secondary.opacity(0.2)
-                }
-            }
-            .frame(width: 50, height: 70)
-            .cornerRadius(4)
-            .clipped()
-            
-            // Info
-            VStack(alignment: .leading, spacing: 4) {
-                Text(book.name)
-                    .font(.headline)
-                    .lineLimit(1)
-                
-                Text(book.author)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                
-                Spacer()
-                
-                HStack {
-                    Text(book.originName)
-                        .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.blue.opacity(0.1))
-                        .foregroundColor(.blue)
-                        .cornerRadius(4)
-                    
-                    if let kind = book.kind {
-                        Text(kind)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-                    
-                    Spacer()
-                }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-}
-
-#Preview {
-    SearchView()
-        .environmentObject(SourceStore())
 }
