@@ -166,7 +166,11 @@ struct SearchView: View {
     }
     
     private func performSearch() {
-        guard !searchText.isEmpty else { return }
+        print("DEBUG UI: performSearch called")
+        guard !searchText.isEmpty else {
+            print("DEBUG UI: searchText is empty")
+            return
+        }
         
         // Reset state
         isSearching = true
@@ -174,19 +178,25 @@ struct SearchView: View {
         
         // Get enabled sources
         let enabledSources = sourceStore.sources.filter { $0.enabled }
+        print("DEBUG UI: enabledSources count: \(enabledSources.count)")
         
         // Start search stream
         Task {
+            print("DEBUG UI: Inside Task, calling searchModel.search")
             let stream = await searchModel.search(keyword: searchText, sources: enabledSources)
+            print("DEBUG UI: Got stream, starting iteration")
             
             for await books in stream {
+                print("DEBUG UI: Received \(books.count) books")
                 await MainActor.run {
                     self.searchResults.append(contentsOf: books)
                 }
             }
             
+            print("DEBUG UI: Stream finished")
             await MainActor.run {
                 self.isSearching = false
+                print("DEBUG UI: Search finished, isSearching = false")
             }
         }
     }

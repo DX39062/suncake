@@ -13,6 +13,14 @@ class SourceStore: ObservableObject {
         loadSources()
         if sources.isEmpty {
             loadDefaultSources()
+        } else {
+            // Auto-repair: If we have the default "示例书源" but it lacks searchUrl, regenerate it.
+            // This handles the case where the user ran the app with the broken default generation code.
+            if let defaultSource = sources.first(where: { $0.bookSourceName == "示例书源" }),
+               (defaultSource.searchUrl == nil || defaultSource.searchUrl!.isEmpty) {
+                print("DEBUG SOURCE: Detected broken default source. Regenerating...")
+                loadDefaultSources() // This overwrites sources and saves
+            }
         }
     }
     
@@ -24,9 +32,28 @@ class SourceStore: ObservableObject {
         
         do {
             let data = try Data(contentsOf: url)
+            
+            // Diagnostic: Print raw JSON of the first source
+            if let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]], let firstJson = jsonObject.first {
+                print("DEBUG SOURCE JSON: First source keys: \(firstJson.keys.sorted())")
+                print("DEBUG SOURCE JSON: searchUrl value in JSON: \(String(describing: firstJson["searchUrl"]))")
+                if let ruleSearch = firstJson["ruleSearch"] as? [String: Any] {
+                     print("DEBUG SOURCE JSON: ruleSearch keys: \(ruleSearch.keys.sorted())")
+                }
+            }
+            
             let decoder = JSONDecoder()
             sources = try decoder.decode([BookSource].self, from: data)
             print("Loaded \(sources.count) sources.")
+            
+            if let first = sources.first {
+                print("DEBUG SOURCE: First source name: \(first.bookSourceName)")
+                print("DEBUG SOURCE: searchUrl: \(String(describing: first.searchUrl))")
+                
+                let countWithSearchUrl = sources.filter { $0.searchUrl != nil && !$0.searchUrl!.isEmpty }.count
+                print("DEBUG SOURCE: Sources with searchUrl: \(countWithSearchUrl) / \(sources.count)")
+            }
+            
         } catch {
             print("Error loading sources: \(error)")
         }
@@ -73,22 +100,6 @@ class SourceStore: ObservableObject {
         }
         
         guard !newSources.isEmpty else { return }
-        
-        // Merge with existing sources
-        var currentSourcesDict = Dictionary(uniqueKeysWithValues: sources.map { ($0.bookSourceUrl, $0) })
-        
-        for source in newSources {
-            currentSourcesDict[source.bookSourceUrl] = source
-        }
-        
-        // Convert back to array and sort by customOrder or other criteria if needed
-        // For now, we just update the list.
-        // To maintain some order, we might want to keep original order + new ones, but dictionary loses order.
-        // Let's implement a more careful merge to preserve order if possible, or just append new ones and replace old ones in place.
-        
-        // Strategy: 
-        // 1. Identify indices of existing sources to update.
-        // 2. Append new sources that don't exist.
         
         // Helper set for fast lookup of new URLS
         let newSourceMap = Dictionary(uniqueKeysWithValues: newSources.map { ($0.bookSourceUrl, $0) })
@@ -148,6 +159,7 @@ class SourceStore: ObservableObject {
             bookSourceGroup: "默认",
             bookSourceType: 0,
             enabled: true,
+            searchUrl: "https://www.example.com/search?keyword={{key}}",
             ruleSearch: .init(
                 bookList: "class.book-list",
                 name: "class.name@text",

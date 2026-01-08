@@ -354,13 +354,14 @@ class RuleEngine {
 
 class SearchModel {
     
-    // MARK: - API
-    
-    /// Searches for books across multiple sources concurrently.
-    /// Returns an async stream of results as they become available.
     func search(keyword: String, sources: [BookSource]) async -> AsyncStream<[Book]> {
+        // 这一行必须在返回 AsyncStream 之前执行
+        print("DEBUG MODEL: search 函数被触发，关键字: \(keyword)")
+        
         return AsyncStream { continuation in
+            // 在流的内部启动一个独立的 Task 处理并发
             Task {
+                print("DEBUG MODEL: AsyncStream 内部 Task 启动")
                 await withTaskGroup(of: [Book].self) { group in
                     for source in sources {
                         group.addTask {
@@ -370,149 +371,88 @@ class SearchModel {
                     
                     for await books in group {
                         if !books.isEmpty {
+                            print("DEBUG MODEL: 产生结果，数量: \(books.count)")
                             continuation.yield(books)
                         }
                     }
+                    print("DEBUG MODEL: 所有书源搜索任务结束")
                     continuation.finish()
                 }
             }
         }
     }
     
-    // MARK: - Single Source Processing
-    
     private func searchSingleSource(keyword: String, source: BookSource) async -> [Book] {
-        guard source.enabled, let searchRule = source.ruleSearch, let searchUrlRaw = source.searchUrl else {
-            return []
+        print("DEBUG MODEL: searchSingleSource 开始 - \(source.bookSourceName), enabled: \(source.enabled), hasSearchUrl: \(source.searchUrl != nil)")
+        
+        guard source.enabled, let searchUrlRaw = source.searchUrl else { 
+            print("DEBUG MODEL: \(source.bookSourceName) 被跳过 (未启用或缺少 searchUrl)")
+            return [] 
         }
         
-        // 1. Prepare Request
-        // Detect charset from options
-        let (_, options) = UrlAnalyzer.splitUrlAndOptions(searchUrlRaw)
-        let charset = options?.charset ?? "utf-8"
-        
-        // Encode keyword
-        let encodedKey = encode(keyword: keyword, charset: charset)
-        
-        // Replace {{key}} with encoded keyword
-        let urlStr = searchUrlRaw.replacingOccurrences(of: "{{key}}", with: encodedKey)
-                                 .replacingOccurrences(of: "{key}", with: encodedKey)
-        
-        // TODO: Handle page replacement {{page}} -> 1 for search
-        let finalUrlStr = urlStr.replacingOccurrences(of: "{{page}}", with: "1")
+        print("DEBUG MODEL: 正在处理源 -> \(source.bookSourceName), URL: \(searchUrlRaw)")
         
         do {
-            let request = try await UrlAnalyzer.getRequest(urlStr: finalUrlStr, source: source)
+            let request = try await UrlAnalyzer.getRequest(urlStr: searchUrlRaw, keyword: keyword, source: source)
             
-            // 2. Fetch Data
-            // Use URLSession with default configuration
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 10
+            let session = URLSession(configuration: config)
             
-            guard let httpResponse = response as? HTTPURLResponse else { return [] }
+            let (data, _) = try await session.data(for: request)
             
-            // Handle Encoding (Legado might define charset in rule, but for now try UTF-8 or ISO-8859-1 fallback)
-            // Ideally UrlAnalyzer detects charset from headers/meta.
-            // Simplified: UTF-8 or ISO-8859-1. TODO: use detected charset for decoding too?
-            var content = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) ?? ""
+            guard let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+                print("DEBUG MODEL: \(source.bookSourceName) 编码失败")
+                return []
+            }
             
-            // 3. Parse Data
-            if content.isEmpty { return [] }
+            print("DEBUG MODEL: \(source.bookSourceName) 请求成功, 长度: \(html.count)")
             
             let ruleEngine = RuleEngine(source: source)
-            
-            // Book List Rule
-            let listRule = searchRule.bookList ?? ""
-            guard !listRule.isEmpty else { return [] }
-            
-            let elements = ruleEngine.elements(content: content, ruleStr: listRule)
+            let listRule = source.ruleSearch?.bookList ?? ""
+            let elements = ruleEngine.elements(content: html, ruleStr: listRule)
             
             var books: [Book] = []
-            
-            for element in elements {
-                // Extract fields
-                let name = ruleEngine.text(element: element, ruleStr: searchRule.name ?? "")
-                let author = ruleEngine.text(element: element, ruleStr: searchRule.author ?? "")
-                let bookUrl = ruleEngine.text(element: element, ruleStr: searchRule.bookUrl ?? "")
+            var debugCount = 0
+            for element in (elements as? [Element] ?? []) {
+                let name = ruleEngine.text(element: element, ruleStr: source.ruleSearch?.name ?? "")
+                let author = ruleEngine.text(element: element, ruleStr: source.ruleSearch?.author ?? "")
+                let bookUrl = ruleEngine.text(element: element, ruleStr: source.ruleSearch?.bookUrl ?? "")
                 
-                // Validate essential fields
-                if name.isEmpty || bookUrl.isEmpty { continue }
-                
-                // Extract optional fields
-                var coverUrl = ruleEngine.text(element: element, ruleStr: searchRule.coverUrl ?? "")
-                if !coverUrl.isEmpty {
-                    // Normalize URL if relative
-                    coverUrl = normalizeUrl(coverUrl, baseUrl: source.bookSourceUrl)
+                if debugCount < 3 {
+                    print("DEBUG MODEL PARSE: Element \(debugCount)")
+                    print("  Name Rule: \(source.ruleSearch?.name ?? "") -> Result: '\(name)'")
+                    print("  Url Rule: \(source.ruleSearch?.bookUrl ?? "") -> Result: '\(bookUrl)'")
+                    debugCount += 1
                 }
                 
-                var fullBookUrl = normalizeUrl(bookUrl, baseUrl: source.bookSourceUrl)
-
-                let intro = ruleEngine.text(element: element, ruleStr: searchRule.intro ?? "")
-                let kind = ruleEngine.text(element: element, ruleStr: searchRule.kind ?? "")
-                let lastChapter = ruleEngine.text(element: element, ruleStr: searchRule.lastChapter ?? "")
+                if name.isEmpty || bookUrl.isEmpty { continue }
                 
-                let book = Book(
+                let fullBookUrl = normalizeUrl(bookUrl, baseUrl: source.bookSourceUrl)
+                var coverUrl = ruleEngine.text(element: element, ruleStr: source.ruleSearch?.coverUrl ?? "")
+                if !coverUrl.isEmpty { coverUrl = normalizeUrl(coverUrl, baseUrl: source.bookSourceUrl) }
+                
+                books.append(Book(
                     name: name,
                     author: author,
                     coverUrl: coverUrl.isEmpty ? nil : coverUrl,
                     bookUrl: fullBookUrl,
                     origin: source.bookSourceUrl,
-                    originName: source.bookSourceName,
-                    intro: intro.isEmpty ? nil : intro,
-                    kind: kind.isEmpty ? nil : kind,
-                    latestChapterTitle: lastChapter.isEmpty ? nil : lastChapter
-                )
-                books.append(book)
+                    originName: source.bookSourceName
+                ))
             }
-            
             return books
-            
         } catch {
-            print("Search error for \(source.bookSourceName): \(error)")
+            print("DEBUG MODEL: \(source.bookSourceName) 异常: \(error.localizedDescription)")
             return []
         }
     }
     
     private func normalizeUrl(_ url: String, baseUrl: String) -> String {
         if url.lowercased().hasPrefix("http") { return url }
-        
-        // Simple join
-        // Real implementation should use URL(string:relativeTo:)
         if let base = URL(string: baseUrl), let full = URL(string: url, relativeTo: base) {
             return full.absoluteString
         }
         return baseUrl + url
-    }
-    
-    private func encode(keyword: String, charset: String) -> String {
-        let encoding: String.Encoding
-        if charset.lowercased() == "gbk" {
-            encoding = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)))
-        } else {
-            encoding = .utf8
-        }
-        
-        if encoding == .utf8 {
-             return keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword
-        } else {
-             guard let data = keyword.data(using: encoding) else { return keyword }
-             
-             // URLEncoder logic: alphanumeric and -_.* are allowed. Others are %XX.
-             // Space is + in form-urlencoded, but %20 in path/query usually. Legado uses URLEncoder.encode which produces + for space?
-             // Swift .urlQueryAllowed includes ? / etc. 
-             // We want strict encoding for query value.
-             
-             let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.*"))
-             
-             var result = ""
-             for byte in data {
-                 let scalar = UnicodeScalar(byte)
-                 if byte < 128, allowed.contains(scalar) {
-                     result.append(Character(scalar))
-                 } else {
-                     result.append(String(format: "%%%02X", byte))
-                 }
-             }
-             return result
-        }
     }
 }
