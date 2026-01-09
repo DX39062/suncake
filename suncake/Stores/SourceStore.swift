@@ -148,21 +148,24 @@ class SourceStore: ObservableObject {
     
     // MARK: - Validation
     
-    func checkAllSources() {
+    func checkAllSources(onResult: ((String, Bool) -> Void)? = nil) {
         validationStatuses.removeAll()
         for source in sources {
-            checkSource(source)
+            checkSource(source, onResult: onResult)
         }
     }
     
-    func checkSource(_ source: BookSource) {
+    func checkSource(_ source: BookSource, onResult: ((String, Bool) -> Void)? = nil) {
         let id = source.id
         validationStatuses[id] = .checking
         
         Task {
             do {
                 guard !source.bookSourceUrl.isEmpty else {
-                     DispatchQueue.main.async { self.validationStatuses[id] = .invalid("Empty URL") }
+                     DispatchQueue.main.async {
+                         self.validationStatuses[id] = .invalid("Empty URL")
+                         onResult?(id, false)
+                     }
                      return
                 }
 
@@ -177,16 +180,20 @@ class SourceStore: ObservableObject {
                     if let httpResponse = response as? HTTPURLResponse {
                         if (200...299).contains(httpResponse.statusCode) {
                             self.validationStatuses[id] = .valid
+                            onResult?(id, true)
                         } else {
                             self.validationStatuses[id] = .invalid("HTTP \(httpResponse.statusCode)")
+                            onResult?(id, false)
                         }
                     } else {
                          self.validationStatuses[id] = .invalid("Invalid Response")
+                         onResult?(id, false)
                     }
                 }
             } catch {
                 DispatchQueue.main.async {
                     self.validationStatuses[id] = .invalid(error.localizedDescription)
+                    onResult?(id, false)
                 }
             }
         }

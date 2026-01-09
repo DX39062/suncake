@@ -28,6 +28,13 @@ class ReaderViewModel: ObservableObject {
     func loadContent() {
         guard currentChapterIndex >= 0 && currentChapterIndex < chapters.count else { return }
         let chapter = chapters[currentChapterIndex]
+        
+        // Calculate next chapter URL for multi-page detection
+        var nextChapterUrl: String?
+        if currentChapterIndex + 1 < chapters.count {
+            nextChapterUrl = chapters[currentChapterIndex + 1].url
+        }
+        
         self.title = chapter.title
         self.isLoading = true
         self.errorMessage = nil
@@ -36,7 +43,7 @@ class ReaderViewModel: ObservableObject {
         Task {
             do {
                 print("DEBUG READER: Loading content for \(chapter.title), url: \(chapter.url)")
-                let rawContent = try await WebBook.getContent(source: source, chapterUrl: chapter.url)
+                let rawContent = try await WebBook.getContent(source: source, chapterUrl: chapter.url, nextChapterUrl: nextChapterUrl)
                 print("DEBUG READER: Raw content length: \(rawContent.count)")
                 if rawContent.isEmpty {
                      print("DEBUG READER: Raw content is empty!")

@@ -239,6 +239,24 @@ class RuleEngine {
         } else if parts[0] == "tag" && parts.count >= 2 {
             selector = parts[1]
             if parts.count > 2 { indexStr = parts[2] }
+        } else if parts[0] == "text" && parts.count >= 2 {
+            // Support for text.someText selector
+            let textToFind = parts[1]
+            // Try to find elements that directly contain the text (more precise)
+            do {
+                var found = try container.select("*:containsOwn(\(textToFind))").array()
+                if found.isEmpty {
+                    // Fallback to any element containing the text
+                    found = try container.select("*:contains(\(textToFind))").array()
+                }
+                if parts.count > 2 { indexStr = parts[2] }
+                if let idx = indexStr {
+                    return applyIndex(found, indexStr: idx)
+                }
+                return found
+            } catch {
+                return []
+            }
         } else if parts[0] == "children" {
             let children = container.children().array()
             if parts.count > 1 { return applyIndex(children, indexStr: parts[1]) }
@@ -393,34 +411,87 @@ class WebBook {
         return books
     }
     
-    static func getContent(source: BookSource, chapterUrl: String) async throws -> String {
+    static func getContent(source: BookSource, chapterUrl: String, nextChapterUrl: String? = nil) async throws -> String {
         print("DEBUG RULE: Fetching content from \(chapterUrl)")
-        let html = try await UrlAnalyzer.shared.fetchHtml(url: chapterUrl, source: source)
-        print("DEBUG RULE: Fetched HTML length: \(html.count)")
-        let engine = RuleEngine(source: source)
-        engine.baseUrl = chapterUrl
         
-        // 1. 获取正文内容
-        var contentRule = source.ruleContent?.content ?? ""
-        print("DEBUG RULE: Content rule: \(contentRule)")
+        var currentUrl = chapterUrl
+        var fullContent = ""
+        var pageCount = 0
+        let maxPages = 30 // Safety limit to prevent infinite loops
+        var visitedUrls = Set<String>()
+        visitedUrls.insert(chapterUrl)
         
-        // 如果规则没有指定动作（如 @text, @html），默认追加 @html 以保留格式（换行等），
-        // 交由 ContentProcessor 清洗
-        if !contentRule.isEmpty && !contentRule.contains("@") && !contentRule.contains("js:") {
-            contentRule += "@html"
-            print("DEBUG RULE: Modified content rule: \(contentRule)")
+        while pageCount < maxPages {
+            let html = try await UrlAnalyzer.shared.fetchHtml(url: currentUrl, source: source)
+            
+            let engine = RuleEngine(source: source)
+            engine.baseUrl = currentUrl
+            
+            // 1. 获取正文内容
+            var contentRule = source.ruleContent?.content ?? ""
+            
+            if !contentRule.isEmpty && !contentRule.contains("@") && !contentRule.contains("js:") {
+                contentRule += "@html"
+            }
+            
+            let pageContent = engine.text(element: html, ruleStr: contentRule)
+            
+            if !pageContent.isEmpty {
+                if !fullContent.isEmpty {
+                    fullContent += "\n"
+                }
+                fullContent += pageContent
+            }
+            
+            pageCount += 1
+            
+            // 2. 检查是否有下一页
+            guard let nextUrlRule = source.ruleContent?.nextContentUrl, !nextUrlRule.isEmpty else {
+                print("DEBUG RULE: No nextContentUrl rule defined.")
+                break
+            }
+            
+            print("DEBUG RULE: Next page rule: \(nextUrlRule)")
+            
+            var nextUrl = engine.text(element: html, ruleStr: nextUrlRule)
+            
+            // Normalize URL
+            if !nextUrl.isEmpty && !nextUrl.lowercased().hasPrefix("http") {
+                if let base = URL(string: currentUrl) {
+                    nextUrl = URL(string: nextUrl, relativeTo: base)?.absoluteString ?? nextUrl
+                }
+            }
+            
+            print("DEBUG RULE: Extracted next page url: '\(nextUrl)'")
+            
+            // Validation
+            if nextUrl.isEmpty { 
+                print("DEBUG RULE: Next page url is empty.")
+                break 
+            }
+            
+            if let nextChapterUrl = nextChapterUrl, nextUrl == nextChapterUrl {
+                print("DEBUG RULE: Next page matches next chapter URL. Stopping.")
+                break
+            }
+            
+            if visitedUrls.contains(nextUrl) || nextUrl == currentUrl {
+                print("DEBUG RULE: Next page loop detected. Stopping.")
+                break
+            }
+            
+            print("DEBUG RULE: Found next page: \(nextUrl)")
+            currentUrl = nextUrl
+            visitedUrls.insert(nextUrl)
+            
+            try await Task.sleep(nanoseconds: 200_000_000) // 0.2s
         }
         
-        var content = engine.text(element: html, ruleStr: contentRule)
-        print("DEBUG RULE: Extracted content length: \(content.count)")
-        
-        // 2. 如果内容为空，尝试 fallback 或者直接返回 html body (视情况而定)
-        if content.isEmpty && source.ruleContent?.content == nil {
-             // 如果没有规则，暂不处理，避免显示乱码
+        if fullContent.isEmpty && source.ruleContent?.content == nil {
              print("DEBUG RULE: Content empty and no rule.")
         }
         
-        return content
+        return fullContent
     }
 }
 

@@ -23,19 +23,41 @@ struct SourceListView: View {
                 Spacer()
                 
                 if editMode == .active {
-                    if !selection.isEmpty {
-                        Button(role: .destructive) {
-                            sourceStore.deleteSources(ids: selection)
-                            selection.removeAll()
-                            editMode = .inactive
-                        } label: {
-                            Text("删除选中 (\(selection.count))")
-                                .foregroundColor(.red)
+                    HStack(spacing: 12) {
+                        if !selection.isEmpty {
+                            Button("启用") {
+                                for id in selection {
+                                    if let index = sourceStore.sources.firstIndex(where: { $0.id == id }) {
+                                        sourceStore.sources[index].enabled = true
+                                    }
+                                }
+                                sourceStore.saveSources()
+                            }
+                            
+                            Button("禁用") {
+                                for id in selection {
+                                    if let index = sourceStore.sources.firstIndex(where: { $0.id == id }) {
+                                        sourceStore.sources[index].enabled = false
+                                    }
+                                }
+                                sourceStore.saveSources()
+                            }
+                            
+                            Button(role: .destructive) {
+                                sourceStore.deleteSources(ids: selection)
+                                selection.removeAll()
+                                // Optional: exit edit mode after delete?
+                                // editMode = .inactive 
+                            } label: {
+                                Text("删除 (\(selection.count))")
+                                    .foregroundColor(.red)
+                            }
                         }
-                    }
-                    Button("完成") {
-                        editMode = .inactive
-                        selection.removeAll()
+                        
+                        Button("完成") {
+                            editMode = .inactive
+                            selection.removeAll()
+                        }
                     }
                 } else {
                     HStack(spacing: 12) {
@@ -44,7 +66,12 @@ struct SourceListView: View {
                         }
                         
                         Button("校验") {
-                            sourceStore.checkAllSources()
+                            editMode = .active
+                            sourceStore.checkAllSources { id, isValid in
+                                if !isValid {
+                                    selection.insert(id)
+                                }
+                            }
                         }
                         
                         Button("多选") {
