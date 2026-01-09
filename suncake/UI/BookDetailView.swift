@@ -1,4 +1,4 @@
-import SwiftUI
+internal import SwiftUI
 
 struct BookDetailView: View {
     let initialBook: Book

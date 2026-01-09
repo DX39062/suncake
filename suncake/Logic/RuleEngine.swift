@@ -4,7 +4,7 @@ import CoreFoundation
 
 class RuleEngine {
     let source: BookSource
-    private let jsRuntime = JSRuntime() // 必须打通 JSRuntime.swift
+    private let jsRuntime = JSRuntime()
     
     init(source: BookSource) {
         self.source = source
@@ -12,76 +12,178 @@ class RuleEngine {
     
     // MARK: - Core Methods
     
-    /// 解析列表元素（如搜索结果列表）
+    /// 解析列表元素
     func elements(content: String, ruleStr: String) -> [Any] {
         guard !ruleStr.isEmpty else { return [] }
         
-        // 1. 处理顶级 JS 规则
+        // 处理 || 优先级 (Fallback)
+        let subRules = ruleStr.components(separatedBy: "||")
+        for subRule in subRules {
+            let result = elementsInternal(content: content, ruleStr: subRule.trimmingCharacters(in: .whitespacesAndNewlines))
+            if !result.isEmpty {
+                return result
+            }
+        }
+        return []
+    }
+    
+    private func elementsInternal(content: String, ruleStr: String) -> [Any] {
         if isJsRule(ruleStr) {
             return evalJSList(ruleStr, result: content)
         }
         
+        // 1. 检测是否是 XPath
+        if isXPath(ruleStr) {
+            return evaluateXPath(content: content, xpath: ruleStr)
+        }
+        
+        // 2. CSS/JSoup 解析逻辑
         do {
-            // 解析初始文档
-            let doc = try SwiftSoup.parse(content, source.bookSourceUrl)
-            var currentElements = Elements([doc])
+            var currentContent = content
+            let (cleanRule, regexRule) = splitRegexRule(ruleStr)
+            if let regex = regexRule {
+                currentContent = applyRegex(content: currentContent, regexStr: regex)
+            }
             
-            // 处理 @ 分隔的级联规则
-            let steps = ruleStr.components(separatedBy: "@")
+            let doc = try SwiftSoup.parse(currentContent, source.bookSourceUrl)
+            var currentElements: [Element] = [doc]
+            
+            let steps = cleanRule.components(separatedBy: "@")
             for step in steps {
                 let cleanStep = step.trimmingCharacters(in: .whitespacesAndNewlines)
                 if cleanStep.isEmpty { continue }
                 
-                // 级联中的 JS 转换
                 if isJsRule(cleanStep) {
                     let combinedHtml = currentElements.map { (try? $0.outerHtml()) ?? "" }.joined(separator: "\n")
                     return evalJSList(cleanStep, result: combinedHtml)
                 }
                 
-                // 转换并执行 CSS 选择
-                let selector = mapLegadoSelectorToCss(cleanStep)
-                currentElements = try currentElements.select(selector)
+                var nextElements: [Element] = []
+                for el in currentElements {
+                    let found = selectElements(from: el, rule: cleanStep)
+                    nextElements.append(contentsOf: found)
+                }
+                currentElements = nextElements
+                if currentElements.isEmpty { break }
             }
-            return currentElements.array()
+            return currentElements
         } catch {
-            print("RuleEngine Error: \(error.localizedDescription)")
+            print("RuleEngine Error (elements): \(error.localizedDescription)")
             return []
         }
     }
     
-    /// 解析具体字段（如书名、链接）
+    /// 解析具体字段
     func text(element: Any, ruleStr: String) -> String {
         let rule = ruleStr.trimmingCharacters(in: .whitespacesAndNewlines)
-        if rule.isEmpty { return elementToText(element) }
-        
-        // 1. 处理 JS 规则
-        if isJsRule(rule) {
-            return evalJSText(rule, element: element)
+        if rule.isEmpty {
+            if element is String { return "" }
+            return elementToText(element)
         }
         
-        // 2. 处理复合规则 (如 class.title@text)
-        let parts = rule.components(separatedBy: "@")
+        // 处理 || 优先级
+        let subRules = rule.components(separatedBy: "||")
+        for subRule in subRules {
+            let result = textInternal(element: element, ruleStr: subRule.trimmingCharacters(in: .whitespacesAndNewlines))
+            if !result.isEmpty {
+                return result
+            }
+        }
+        return ""
+    }
+    
+    private func textInternal(element: Any, ruleStr: String) -> String {
+        if isJsRule(ruleStr) {
+            return evalJSText(ruleStr, element: element)
+        }
+        
+        // 处理 XPath
+        if isXPath(ruleStr) {
+            return evaluateXPathText(element: element, xpath: ruleStr)
+        }
+        
+        let (cleanRule, regexRule) = splitRegexRule(ruleStr)
+        let steps = cleanRule.components(separatedBy: "@")
         var current: Any = element
         
-        for (index, part) in parts.enumerated() {
-            let p = part.trimmingCharacters(in: .whitespacesAndNewlines)
-            if p.isEmpty { continue }
+        // 自动转换 HTML 字符串为 Element
+        if let html = current as? String {
+            if let doc = try? SwiftSoup.parse(html, source.bookSourceUrl) {
+                current = doc
+            }
+        }
+        
+        for (index, step) in steps.enumerated() {
+            let cleanStep = step.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleanStep.isEmpty { continue }
             
-            let isLast = index == parts.count - 1
+            let isLast = index == steps.count - 1
             if isLast {
-                // 最后一级：提取 Action 或 最终选择器
-                return handleActionOrExtract(current, action: p)
+                let extracted = handleActionOrExtract(current, action: cleanStep)
+                return regexRule != nil ? applyRegex(content: extracted, regexStr: regexRule!) : extracted
             } else {
-                // 中间级：向下钻取
                 if let el = current as? Element {
-                    let selector = mapLegadoSelectorToCss(p)
-                    if let next = try? el.select(selector).first() {
+                    if let next = selectElements(from: el, rule: cleanStep).first {
                         current = next
                     } else { return "" }
                 }
             }
         }
-        return elementToText(current)
+        
+        let finalText = elementToText(current)
+        return regexRule != nil ? applyRegex(content: finalText, regexStr: regexRule!) : finalText
+    }
+
+    // MARK: - XPath Support
+    
+    private func isXPath(_ rule: String) -> Bool {
+        return rule.hasPrefix("//") || rule.hasPrefix("./") || rule.hasPrefix("/")
+    }
+    
+    private func evaluateXPath(content: String, xpath: String) -> [Any] {
+        #if os(macOS)
+        do {
+            // 使用 XMLDocument 解析 HTML (TidyHTML 模式)
+            let options = XMLNode.Options(rawValue: UInt(XMLDocument.ContentKind.html.rawValue) | XMLNode.Options.documentTidyHTML.rawValue)
+            let doc = try XMLDocument(xmlString: content, options: options)
+            return try doc.nodes(forXPath: xpath)
+        } catch {
+            print("DEBUG RuleEngine: XPath Error -> \(error)")
+            return []
+        }
+        #else
+        return [] // iOS 暂不支持原生 XMLDocument，需后续引入第三方库
+        #endif
+    }
+    
+    private func evaluateXPathText(element: Any, xpath: String) -> String {
+        #if os(macOS)
+        let targetNode: XMLNode?
+        if let node = element as? XMLNode {
+            targetNode = node
+        } else {
+            let html: String?
+            if let el = element as? Element {
+                html = try? el.outerHtml()
+            } else if let els = element as? Elements {
+                html = try? els.outerHtml()
+            } else {
+                html = element as? String
+            }
+            
+            if let htmlStr = html {
+                let options = XMLNode.Options(rawValue: UInt(XMLDocument.ContentKind.html.rawValue) | XMLNode.Options.documentTidyHTML.rawValue)
+                targetNode = try? XMLDocument(xmlString: htmlStr, options: options)
+            } else {
+                targetNode = nil
+            }
+        }
+        
+        if let node = targetNode, let results = try? node.nodes(forXPath: xpath) {
+            return results.compactMap { $0.stringValue }.joined(separator: "\n")
+        }
+        #endif
+        return ""
     }
 
     // MARK: - Helper Methods
@@ -89,24 +191,125 @@ class RuleEngine {
     private func isJsRule(_ rule: String) -> Bool {
         return rule.contains("@js:") || rule.hasPrefix("<js>") || rule.contains("{{")
     }
+    
+    private func splitRegexRule(_ rule: String) -> (String, String?) {
+        if let range = rule.range(of: "##") {
+            let clean = String(rule[..<range.lowerBound])
+            let regex = String(rule[range.lowerBound...])
+            return (clean, regex)
+        }
+        return (rule, nil)
+    }
+    
+    private func applyRegex(content: String, regexStr: String) -> String {
+        let parts = regexStr.components(separatedBy: "##").filter { !$0.isEmpty }
+        guard parts.count >= 1 else { return content }
+        let pattern = parts[0]
+        let replacement = parts.count > 1 ? parts[1] : ""
+        
+        do {
+            let regex = try NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators])
+            let range = NSRange(content.startIndex..., in: content)
+            return regex.stringByReplacingMatches(in: content, options: [], range: range, withTemplate: replacement)
+        } catch {
+            return content
+        }
+    }
 
-    /// 将 Legado 的伪 CSS 转换为标准 CSS
-    private func mapLegadoSelectorToCss(_ part: String) -> String {
-        var p = part
-        if p.hasPrefix("class.") { p = "." + p.dropFirst(6) }
-        else if p.hasPrefix("id.") { p = "#" + p.dropFirst(3) }
-        else if p.hasPrefix("tag.") { p = String(p.dropFirst(4)) }
-        return p
+    private func selectElements(from container: Element, rule: String) -> [Element] {
+        var cleanRule = rule
+        if rule.uppercased().hasPrefix("@CSS:") {
+            cleanRule = String(rule.dropFirst(5)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        
+        let parts = cleanRule.components(separatedBy: ".")
+        guard !parts.isEmpty else { return [] }
+        
+        var selector = ""
+        var indexStr: String? = nil
+        
+        if parts[0] == "class" && parts.count >= 2 {
+            selector = "." + parts[1]
+            if parts.count > 2 { indexStr = parts[2] }
+        } else if parts[0] == "id" && parts.count >= 2 {
+            selector = "#" + parts[1]
+            if parts.count > 2 { indexStr = parts[2] }
+        } else if parts[0] == "tag" && parts.count >= 2 {
+            selector = parts[1]
+            if parts.count > 2 { indexStr = parts[2] }
+        } else if parts[0] == "children" {
+            let children = container.children().array()
+            if parts.count > 1 { return applyIndex(children, indexStr: parts[1]) }
+            return children
+        } else {
+            if parts.count > 1, let last = parts.last, isPureIndex(last) {
+                selector = parts.dropLast().joined(separator: ".")
+                indexStr = last
+            } else {
+                selector = cleanRule
+            }
+        }
+        
+        do {
+            let elements = try container.select(selector).array()
+            if let idx = indexStr {
+                return applyIndex(elements, indexStr: idx)
+            }
+            return elements
+        } catch {
+            return []
+        }
+    }
+    
+    private func isPureIndex(_ s: String) -> Bool {
+        if s.isEmpty { return false }
+        if s.hasPrefix("-") { return Int(s.dropFirst()) != nil }
+        return Int(s) != nil
+    }
+    
+    private func applyIndex(_ elements: [Element], indexStr: String) -> [Element] {
+        guard !elements.isEmpty else { return [] }
+        let len = elements.count
+        if let idx = Int(indexStr) {
+            let targetIdx = idx < 0 ? len + idx : idx
+            if targetIdx >= 0 && targetIdx < len {
+                return [elements[targetIdx]]
+            }
+        }
+        return elements
     }
 
     private func handleActionOrExtract(_ current: Any, action: String) -> String {
-        guard let el = current as? Element else {
-            return (current as? String) ?? ""
+        // 如果是 XMLNode (XPath 结果)
+        #if os(macOS)
+        if let node = current as? XMLNode {
+            if action == "text" || action == "ownText" { return node.stringValue ?? "" }
+            if action == "html" { return node.xmlString }
+            if let el = node as? XMLElement {
+                return el.attribute(forName: action)?.stringValue ?? ""
+            }
+            return node.stringValue ?? ""
+        }
+        #endif
+
+        let target: Any
+        if let array = current as? [Any], let first = array.first {
+            target = first
+        } else {
+            target = current
+        }
+
+        guard let el = target as? Element else {
+            return (target as? String) ?? ""
         }
         
         switch action {
         case "text": return (try? el.text()) ?? ""
         case "ownText": return el.ownText()
+        case "textNodes":
+            return el.textNodes().map { $0.text().trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
         case "html": return (try? el.outerHtml()) ?? ""
         case "href", "src":
             let attr = (try? el.attr(action)) ?? ""
@@ -114,17 +317,22 @@ class RuleEngine {
         case "abs:href", "abs:src":
             return (try? el.attr(action)) ?? ""
         default:
-            // 如果 action 是选择器，则提取该选择器的 text
-            let selector = mapLegadoSelectorToCss(action)
-            if let target = try? el.select(selector).first() {
-                return (try? target.text()) ?? ""
+            let attr = (try? el.attr(action)) ?? ""
+            if !attr.isEmpty {
+                if action == "href" || action == "src" { return normalizeUrl(attr) }
+                return attr
             }
-            // 尝试提取任意属性
-            return (try? el.attr(action)) ?? ""
+            if let found = try? el.select(action).first() {
+                return (try? found.text()) ?? ""
+            }
+            return ""
         }
     }
 
     private func elementToText(_ element: Any) -> String {
+        #if os(macOS)
+        if let node = element as? XMLNode { return node.stringValue ?? "" }
+        #endif
         if let el = element as? Element { return (try? el.text()) ?? "" }
         return (element as? String) ?? ""
     }
@@ -135,7 +343,7 @@ class RuleEngine {
         return URL(string: url, relativeTo: base)?.absoluteString ?? url
     }
 
-    // MARK: - JS Execution (需确保 JSRuntime.swift 实现 extractAndEval)
+    // MARK: - JS Execution
     
     private func evalJSList(_ jsStr: String, result: String) -> [Any] {
         let context = ["result": result, "baseUrl": source.bookSourceUrl]
