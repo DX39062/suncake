@@ -155,6 +155,12 @@ class SourceStore: ObservableObject {
         }
     }
     
+    func checkSources(_ sourcesToCheck: [BookSource], onResult: ((String, Bool) -> Void)? = nil) {
+        for source in sourcesToCheck {
+            checkSource(source, onResult: onResult)
+        }
+    }
+    
     func checkSource(_ source: BookSource, onResult: ((String, Bool) -> Void)? = nil) {
         let id = source.id
         validationStatuses[id] = .checking

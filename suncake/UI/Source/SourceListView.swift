@@ -12,18 +12,60 @@ struct SourceListView: View {
     @State private var showingDeleteAlert = false
     @State private var selection = Set<String>() // Stores BookSource IDs
     @State private var editMode: EditMode = .inactive
+    @State private var searchText = ""
+    @State private var isSearching = false
+    
+    var displayedSources: [BookSource] {
+        if searchText.isEmpty {
+            return sourceStore.sources
+        } else {
+            return sourceStore.search(keyword: searchText)
+        }
+    }
     
     var body: some View {
         VStack {
             // Custom Toolbar Area
-            HStack {
-                Text("书源管理")
-                    .font(.headline)
+            HStack(spacing: 12) {
+                if !isSearching {
+                    Text("书源管理")
+                        .font(.headline)
+                }
+                
+                if isSearching {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(.secondary)
+                        TextField("搜索书源...", text: $searchText)
+                            .textFieldStyle(.plain)
+                            .frame(maxWidth: 180)
+                        
+                        if !searchText.isEmpty {
+                            Button {
+                                searchText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        
+                        Button("取消") {
+                            isSearching = false
+                            searchText = ""
+                        }
+                        .foregroundColor(.accentColor)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.secondary.opacity(0.1))
+                    .cornerRadius(8)
+                }
                 
                 Spacer()
                 
-                if editMode == .active {
-                    HStack(spacing: 12) {
+                HStack(spacing: 12) {
+                    if editMode == .active {
                         if !selection.isEmpty {
                             Button("启用") {
                                 for id in selection {
@@ -46,10 +88,8 @@ struct SourceListView: View {
                             Button(role: .destructive) {
                                 sourceStore.deleteSources(ids: selection)
                                 selection.removeAll()
-                                // Optional: exit edit mode after delete?
-                                // editMode = .inactive 
                             } label: {
-                                Text("删除 (\(selection.count))")
+                                Image(systemName: "trash")
                                     .foregroundColor(.red)
                             }
                         }
@@ -58,16 +98,23 @@ struct SourceListView: View {
                             editMode = .inactive
                             selection.removeAll()
                         }
-                    }
-                } else {
-                    HStack(spacing: 12) {
+                        .fontWeight(.bold)
+                    } else {
+                        if !isSearching {
+                            Button {
+                                isSearching = true
+                            } label: {
+                                Image(systemName: "magnifyingglass")
+                            }
+                        }
+                        
                         Button("导入") {
                             importFromClipboard()
                         }
                         
                         Button("校验") {
                             editMode = .active
-                            sourceStore.checkAllSources { id, isValid in
+                            sourceStore.checkSources(displayedSources) { id, isValid in
                                 if !isValid {
                                     selection.insert(id)
                                 }
@@ -81,17 +128,22 @@ struct SourceListView: View {
                         Button(role: .destructive) {
                             showingDeleteAlert = true
                         } label: {
-                            Text("清空")
+                            Image(systemName: isSearching ? "trash.slash" : "trash")
                                 .foregroundColor(.red)
                         }
                     }
                 }
             }
             .padding()
-            .alert("确定删除所有书源吗？", isPresented: $showingDeleteAlert) {
+            .alert(isSearching ? "确定删除搜索到的 \(displayedSources.count) 个书源吗？" : "确定删除所有书源吗？", isPresented: $showingDeleteAlert) {
                 Button("取消", role: .cancel) { }
                 Button("删除", role: .destructive) {
-                    sourceStore.deleteAll()
+                    if isSearching {
+                        let ids = Set(displayedSources.map { $0.id })
+                        sourceStore.deleteSources(ids: ids)
+                    } else {
+                        sourceStore.deleteAll()
+                    }
                 }
             } message: {
                 Text("此操作不可恢复。")
@@ -112,7 +164,7 @@ struct SourceListView: View {
     
     @ViewBuilder
     private var listContent: some View {
-        ForEach(sourceStore.sources) { source in
+        ForEach(displayedSources) { source in
             HStack {
                 #if os(macOS)
                 if editMode == .active {
@@ -169,7 +221,8 @@ struct SourceListView: View {
             .tag(source.id)
         }
         .onDelete { indexSet in
-            sourceStore.deleteSource(at: indexSet)
+            let idsToDelete = indexSet.map { displayedSources[$0].id }
+            sourceStore.deleteSources(ids: Set(idsToDelete))
         }
     }
     
