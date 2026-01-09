@@ -4,10 +4,12 @@ import CoreFoundation
 
 class RuleEngine {
     let source: BookSource
+    var baseUrl: String
     private let jsRuntime = JSRuntime()
     
     init(source: BookSource) {
         self.source = source
+        self.baseUrl = source.bookSourceUrl
     }
     
     // MARK: - Core Methods
@@ -339,21 +341,21 @@ class RuleEngine {
 
     private func normalizeUrl(_ url: String) -> String {
         if url.isEmpty || url.lowercased().hasPrefix("http") { return url }
-        guard let base = URL(string: source.bookSourceUrl) else { return url }
+        guard let base = URL(string: baseUrl) else { return url }
         return URL(string: url, relativeTo: base)?.absoluteString ?? url
     }
 
     // MARK: - JS Execution
     
     private func evalJSList(_ jsStr: String, result: String) -> [Any] {
-        let context = ["result": result, "baseUrl": source.bookSourceUrl]
+        let context = ["result": result, "baseUrl": self.baseUrl]
         let output = jsRuntime.extractAndEval(text: jsStr, with: context)
         return output as? [Any] ?? (output != nil ? ["\(output!)"] : [])
     }
     
     private func evalJSText(_ jsStr: String, element: Any) -> String {
         let resultValue = (try? (element as? Element)?.outerHtml()) ?? (element as? String) ?? ""
-        let context: [String: Any] = ["result": resultValue, "baseUrl": source.bookSourceUrl]
+        let context: [String: Any] = ["result": resultValue, "baseUrl": self.baseUrl]
         return "\(jsRuntime.extractAndEval(text: jsStr, with: context) ?? "")"
     }
 }
@@ -396,6 +398,7 @@ class WebBook {
         let html = try await UrlAnalyzer.shared.fetchHtml(url: chapterUrl, source: source)
         print("DEBUG RULE: Fetched HTML length: \(html.count)")
         let engine = RuleEngine(source: source)
+        engine.baseUrl = chapterUrl
         
         // 1. 获取正文内容
         var contentRule = source.ruleContent?.content ?? ""

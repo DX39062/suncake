@@ -1,6 +1,7 @@
 import Foundation
 import JavaScriptCore
 import CryptoKit
+import CommonCrypto
 
 class JSRuntime {
     
@@ -60,15 +61,6 @@ class JSRuntime {
         
         // Check for {{js: ... }}
         if let range = text.range(of: "\\{\\{js:(.*?)\\}\\}", options: .regularExpression) {
-            let match = text[range]
-            // Extract inner group. The regex above matches the whole block.
-            // Let's use NSRegularExpression for precise group extraction if needed,
-            // or just simple string manipulation since the pattern is known.
-            // Simplified: remove {{js: and }}
-            // Note: This logic assumes the *entire* rule is the JS block or we are extracting just one.
-            // If the rule is "prefix {{js: code }} suffix", this simple check might need to be a replacement loop.
-            // For this task, we assume we are evaluating a JS rule found in `RuleEngine`.
-            
             // Re-implement with regex to capture group 1
             if let regex = try? NSRegularExpression(pattern: "\\{\\{js:(.*?)\\}\\}", options: [.dotMatchesLineSeparators]) {
                 if let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) {
@@ -104,9 +96,10 @@ class JSRuntime {
 @objc protocol JavaShimExport: JSExport {
     func log(_ msg: Any)
     func md5(_ str: String) -> String
+    func md5Encode(_ str: String) -> String
     func base64Encode(_ str: String) -> String
     func base64Decode(_ str: String) -> String
-    // Add other Legado common functions here as needed
+    func aesBase64DecodeToString(_ data: String, _ key: String, _ transformation: String, _ iv: String) -> String
 }
 
 class JavaShim: NSObject, JavaShimExport {
@@ -121,6 +114,10 @@ class JavaShim: NSObject, JavaShimExport {
         return digest.map { String(format: "%02hhx", $0) }.joined()
     }
     
+    func md5Encode(_ str: String) -> String {
+        return md5(str)
+    }
+    
     func base64Encode(_ str: String) -> String {
         guard let data = str.data(using: .utf8) else { return "" }
         return data.base64EncodedString()
@@ -129,5 +126,53 @@ class JavaShim: NSObject, JavaShimExport {
     func base64Decode(_ str: String) -> String {
         guard let data = Data(base64Encoded: str) else { return "" }
         return String(data: data, encoding: .utf8) ?? ""
+    }
+    
+    func aesBase64DecodeToString(_ data: String, _ key: String, _ transformation: String, _ iv: String) -> String {
+        // Basic AES CBC/PKCS7 decryption matching Legado's likely usage
+        guard let dataData = Data(base64Encoded: data),
+              let keyData = key.data(using: .utf8),
+              let ivData = iv.data(using: .utf8) else {
+            print("[JS] AES Decode Args Error")
+            return ""
+        }
+        
+        // Ensure Key is correct length (16/24/32 bytes). Legado usually ensures this via MD5 substring.
+        // IV should be 16 bytes for AES.
+        
+        let operation = CCOperation(kCCDecrypt)
+        let algorithm = CCAlgorithm(kCCAlgorithmAES)
+        // options: kCCOptionPKCS7Padding (PKCS5 is subset/alias here)
+        // If 'transformation' contains "NoPadding", we'd remove this.
+        // Assuming PKCS5Padding/PKCS7Padding as default from Java logic.
+        let options = CCOptions(kCCOptionPKCS7Padding)
+        
+        var numBytesOut: size_t = 0
+        let dataBytes = [UInt8](dataData)
+        let keyBytes = [UInt8](keyData)
+        let ivBytes = [UInt8](ivData)
+        
+        // Output buffer
+        let outLength = dataBytes.count + kCCBlockSizeAES128
+        var outBytes = [UInt8](repeating: 0, count: outLength)
+        
+        let cryptStatus = CCCrypt(
+            operation,
+            algorithm,
+            options,
+            keyBytes, keyBytes.count,
+            ivBytes,
+            dataBytes, dataBytes.count,
+            &outBytes, outLength,
+            &numBytesOut
+        )
+        
+        if cryptStatus == kCCSuccess {
+            let resultData = Data(bytes: outBytes, count: numBytesOut)
+            return String(data: resultData, encoding: .utf8) ?? ""
+        } else {
+            print("[JS] AES Decrypt Failed: \(cryptStatus)")
+            return ""
+        }
     }
 }

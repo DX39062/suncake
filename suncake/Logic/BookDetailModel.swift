@@ -69,6 +69,9 @@ class BookDetailModel: ObservableObject {
                 }
             }
             
+            // 更新 ruleEngine 的 baseUrl，确保相对链接解析正确
+            ruleEngine.baseUrl = currentBaseUrl
+            
             let tocRule = source.ruleToc
             let chapterListRule = tocRule?.chapterList ?? ""
             print("DEBUG TOC: Applying chapterList rule: \(chapterListRule)")

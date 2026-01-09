@@ -4,6 +4,7 @@ internal import SwiftUI
 
 class SourceStore: ObservableObject {
     @Published var sources: [BookSource] = []
+    @Published var validationStatuses: [String: SourceCheckStatus] = [:]
     
     private let fileName = "bookSources.json"
     
@@ -125,6 +126,12 @@ class SourceStore: ObservableObject {
         saveSources()
     }
     
+    /// Deletes sources by their IDs (URLs).
+    func deleteSources(ids: Set<String>) {
+        sources.removeAll { ids.contains($0.id) }
+        saveSources()
+    }
+    
     /// Deletes all sources.
     func deleteAll() {
         sources.removeAll()
@@ -136,6 +143,52 @@ class SourceStore: ObservableObject {
         if let index = sources.firstIndex(where: { $0.id == source.id }) {
             sources[index].enabled.toggle()
             saveSources()
+        }
+    }
+    
+    // MARK: - Validation
+    
+    func checkAllSources() {
+        validationStatuses.removeAll()
+        for source in sources {
+            checkSource(source)
+        }
+    }
+    
+    func checkSource(_ source: BookSource) {
+        let id = source.id
+        validationStatuses[id] = .checking
+        
+        Task {
+            do {
+                guard !source.bookSourceUrl.isEmpty else {
+                     DispatchQueue.main.async { self.validationStatuses[id] = .invalid("Empty URL") }
+                     return
+                }
+
+                // Use UrlAnalyzer to construct the request (handles UA, etc.)
+                var request = try await UrlAnalyzer.getRequest(urlStr: source.bookSourceUrl, source: source)
+                request.timeoutInterval = 10
+                request.httpMethod = "GET"
+
+                let (_, response) = try await URLSession.shared.data(for: request)
+                
+                DispatchQueue.main.async {
+                    if let httpResponse = response as? HTTPURLResponse {
+                        if (200...299).contains(httpResponse.statusCode) {
+                            self.validationStatuses[id] = .valid
+                        } else {
+                            self.validationStatuses[id] = .invalid("HTTP \(httpResponse.statusCode)")
+                        }
+                    } else {
+                         self.validationStatuses[id] = .invalid("Invalid Response")
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.validationStatuses[id] = .invalid(error.localizedDescription)
+                }
+            }
         }
     }
     
@@ -152,6 +205,13 @@ class SourceStore: ObservableObject {
             (source.bookSourceGroup?.lowercased().contains(key) ?? false)
         }
     }
+
+enum SourceCheckStatus: Equatable {
+    case unknown
+    case checking
+    case valid
+    case invalid(String)
+}
     
     // MARK: - Defaults
     
