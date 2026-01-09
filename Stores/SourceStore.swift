@@ -125,6 +125,12 @@ class SourceStore: ObservableObject {
         saveSources()
     }
     
+    /// Deletes all sources.
+    func deleteAll() {
+        sources.removeAll()
+        saveSources()
+    }
+    
     /// Toggles the enabled state of a source.
     func toggleSource(_ source: BookSource) {
         if let index = sources.firstIndex(where: { $0.id == source.id }) {
