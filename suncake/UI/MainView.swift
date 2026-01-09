@@ -155,7 +155,17 @@ struct SearchView: View {
                 List(searchResults) { book in
                     if let source = sourceStore.sources.first(where: { $0.bookSourceUrl == book.origin }) {
                         NavigationLink(destination: BookDetailView(book: book, source: source)) {
-                            BookRowView(book: book)
+                            BookRowView(
+                                book: book,
+                                isInShelf: shelfStore.inShelf(book.bookUrl),
+                                onToggleShelf: {
+                                    if shelfStore.inShelf(book.bookUrl) {
+                                        shelfStore.deleteBook(book)
+                                    } else {
+                                        shelfStore.addBook(book)
+                                    }
+                                }
+                            )
                         }
                         .contextMenu {
                             Button {
@@ -205,6 +215,8 @@ struct SearchView: View {
 
 struct BookRowView: View {
     let book: Book
+    var isInShelf: Bool = false
+    var onToggleShelf: (() -> Void)? = nil
     
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -231,6 +243,18 @@ struct BookRowView: View {
                     }
                     Spacer()
                 }
+            }
+            
+            if let action = onToggleShelf {
+                Spacer()
+                Button(action: action) {
+                    Image(systemName: isInShelf ? "checkmark.circle.fill" : "plus.circle")
+                        .font(.system(size: 22))
+                        .foregroundColor(isInShelf ? .green : .accentColor)
+                }
+                .buttonStyle(.borderless)
+                .padding(.leading, 8)
+                .padding(.top, 20)
             }
         }
         .padding(.vertical, 4)
