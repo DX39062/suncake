@@ -10,6 +10,7 @@ internal import SwiftUI
 @main
 struct suncakeApp: App {
     @StateObject private var sourceStore = SourceStore()
+    @StateObject private var shelfStore = ShelfStore()
     
     init() {
         print("DEBUG: 程序已启动，控制台正常工作")
@@ -19,6 +20,7 @@ struct suncakeApp: App {
         WindowGroup {
             MainView()
                 .environmentObject(sourceStore)
+                .environmentObject(shelfStore)
         }
     }
 }

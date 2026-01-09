@@ -4,6 +4,7 @@ struct BookDetailView: View {
     let initialBook: Book
     let source: BookSource
     @StateObject private var viewModel: BookDetailModel
+    @EnvironmentObject var shelfStore: ShelfStore
     
     init(book: Book, source: BookSource) {
         self.initialBook = book
@@ -47,7 +48,7 @@ struct BookDetailView: View {
                                 }
                             }
                             
-                            Text(viewModel.intro)
+                            Text(viewModel.intro ?? "")
                                 .font(.body)
                                 .padding(.vertical, 8)
                         }
@@ -61,7 +62,7 @@ struct BookDetailView: View {
                                     .padding(.vertical, 4)
                                     .listRowBackground(Color.gray.opacity(0.1))
                             } else {
-                                NavigationLink(destination: ReaderView(source: source, chapters: viewModel.chapters, initialIndex: chapter.index)) {
+                                NavigationLink(destination: ReaderView(bookId: viewModel.book.bookUrl, source: source, chapters: viewModel.chapters, initialIndex: chapter.index)) {
                                     Text(chapter.title)
                                 }
                             }
@@ -71,8 +72,38 @@ struct BookDetailView: View {
             }
         }
         .navigationTitle(viewModel.book.name)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                if shelfStore.inShelf(viewModel.book.bookUrl) {
+                    Button("移除书架") {
+                        shelfStore.deleteBook(viewModel.book)
+                    }
+                    .foregroundColor(.red)
+                } else {
+                    Button("加入书架") {
+                        var bookToAdd = viewModel.book
+                        // Ensure essential fields are set
+                        if bookToAdd.origin.isEmpty { bookToAdd.origin = source.bookSourceUrl }
+                        if bookToAdd.originName.isEmpty { bookToAdd.originName = source.bookSourceName }
+                        shelfStore.addBook(bookToAdd)
+                    }
+                }
+            }
+        }
         .task {
+            // Check if book is in shelf to get latest progress/info
+            if let cachedBook = shelfStore.getBook(initialBook.bookUrl) {
+                // Update viewModel with cached info first
+                viewModel.book = cachedBook
+                if let intro = cachedBook.intro { viewModel.intro = intro }
+            }
+            
             await viewModel.loadDetails()
+            
+            // If in shelf, update shelf with latest details
+            if shelfStore.inShelf(viewModel.book.bookUrl) {
+                shelfStore.updateBookInfo(viewModel.book)
+            }
         }
     }
 }

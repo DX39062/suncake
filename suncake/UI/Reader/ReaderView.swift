@@ -13,10 +13,12 @@ class ReaderViewModel: ObservableObject {
     @Published var currentChapterIndex: Int
     @Published var title: String = ""
     
+    let bookId: String
     let source: BookSource
     let chapters: [Book.Chapter]
     
-    init(source: BookSource, chapters: [Book.Chapter], initialIndex: Int) {
+    init(bookId: String, source: BookSource, chapters: [Book.Chapter], initialIndex: Int) {
+        self.bookId = bookId
         self.source = source
         self.chapters = chapters
         self.currentChapterIndex = initialIndex
@@ -82,12 +84,13 @@ class ReaderViewModel: ObservableObject {
 
 struct ReaderView: View {
     @StateObject var viewModel: ReaderViewModel
+    @EnvironmentObject var shelfStore: ShelfStore
     @Environment(\.dismiss) var dismiss
     
     @State private var fontSize: CGFloat = 18
     
-    init(source: BookSource, chapters: [Book.Chapter], initialIndex: Int) {
-        _viewModel = StateObject(wrappedValue: ReaderViewModel(source: source, chapters: chapters, initialIndex: initialIndex))
+    init(bookId: String, source: BookSource, chapters: [Book.Chapter], initialIndex: Int) {
+        _viewModel = StateObject(wrappedValue: ReaderViewModel(bookId: bookId, source: source, chapters: chapters, initialIndex: initialIndex))
     }
     
     var body: some View {
@@ -168,6 +171,12 @@ struct ReaderView: View {
         }
         .onAppear {
             viewModel.loadContent()
+        }
+        .onChange(of: viewModel.currentChapterIndex) { newIndex in
+            shelfStore.updateProgress(bookUrl: viewModel.bookId, index: newIndex, pos: 0, title: viewModel.title)
+        }
+        .onChange(of: viewModel.title) { newTitle in
+             shelfStore.updateProgress(bookUrl: viewModel.bookId, index: viewModel.currentChapterIndex, pos: 0, title: newTitle)
         }
     }
 }

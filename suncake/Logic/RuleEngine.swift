@@ -397,14 +397,14 @@ class WebBook {
             let name = engine.text(element: element, ruleStr: source.ruleSearch?.name ?? "")
             if name.isEmpty { continue }
             books.append(Book(
-                name: name,
-                author: engine.text(element: element, ruleStr: source.ruleSearch?.author ?? ""),
-                coverUrl: engine.text(element: element, ruleStr: source.ruleSearch?.coverUrl ?? ""),
                 bookUrl: engine.text(element: element, ruleStr: source.ruleSearch?.bookUrl ?? ""),
                 origin: source.bookSourceUrl,
                 originName: source.bookSourceName,
-                intro: engine.text(element: element, ruleStr: source.ruleSearch?.intro ?? ""),
+                name: name,
+                author: engine.text(element: element, ruleStr: source.ruleSearch?.author ?? ""),
                 kind: engine.text(element: element, ruleStr: source.ruleSearch?.kind ?? ""),
+                coverUrl: engine.text(element: element, ruleStr: source.ruleSearch?.coverUrl ?? ""),
+                intro: engine.text(element: element, ruleStr: source.ruleSearch?.intro ?? ""),
                 latestChapterTitle: engine.text(element: element, ruleStr: source.ruleSearch?.lastChapter ?? "")
             ))
         }

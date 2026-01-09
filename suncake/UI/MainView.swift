@@ -52,7 +52,7 @@ struct MainView: View {
                 if let tab = selectedTab {
                     switch tab {
                     case .shelf:
-                        ShelfPlaceholderView()
+                        BookGridView()
                     case .search:
                         SearchView()
                     case .source:
@@ -95,6 +95,7 @@ struct SettingsPlaceholderView: View {
 
 struct SearchView: View {
     @EnvironmentObject var sourceStore: SourceStore
+    @EnvironmentObject var shelfStore: ShelfStore
     
     @State private var searchText: String = ""
     @State private var searchResults: [Book] = []
@@ -158,9 +159,17 @@ struct SearchView: View {
                         }
                         .contextMenu {
                             Button {
-                                print("Add \(book.name) to shelf")
+                                if shelfStore.inShelf(book.bookUrl) {
+                                    shelfStore.deleteBook(book)
+                                } else {
+                                    shelfStore.addBook(book)
+                                }
                             } label: {
-                                Label("加入书架", systemImage: "plus.circle")
+                                if shelfStore.inShelf(book.bookUrl) {
+                                    Label("移出书架", systemImage: "trash")
+                                } else {
+                                    Label("加入书架", systemImage: "plus.circle")
+                                }
                             }
                         }
                     } else {
