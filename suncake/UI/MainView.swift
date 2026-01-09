@@ -48,19 +48,21 @@ struct MainView: View {
             .listStyle(.sidebar)
             .navigationTitle("阅读")
         } detail: {
-            if let tab = selectedTab {
-                switch tab {
-                case .shelf:
-                    ShelfPlaceholderView()
-                case .search:
-                    SearchView()
-                case .source:
-                    SourceListView()
-                case .settings:
-                    SettingsPlaceholderView()
+            NavigationStack {
+                if let tab = selectedTab {
+                    switch tab {
+                    case .shelf:
+                        ShelfPlaceholderView()
+                    case .search:
+                        SearchView()
+                    case .source:
+                        SourceListView()
+                    case .settings:
+                        SettingsPlaceholderView()
+                    }
+                } else {
+                    Text("请选择一个菜单")
                 }
-            } else {
-                Text("请选择一个菜单")
             }
         }
     }
@@ -150,7 +152,10 @@ struct SearchView: View {
                 }
             } else {
                 List(searchResults) { book in
-                    BookRowView(book: book)
+                    if let source = sourceStore.sources.first(where: { $0.bookSourceUrl == book.origin }) {
+                        NavigationLink(destination: BookDetailView(book: book, source: source)) {
+                            BookRowView(book: book)
+                        }
                         .contextMenu {
                             Button {
                                 print("Add \(book.name) to shelf")
@@ -158,6 +163,9 @@ struct SearchView: View {
                                 Label("加入书架", systemImage: "plus.circle")
                             }
                         }
+                    } else {
+                        BookRowView(book: book)
+                    }
                 }
                 .listStyle(.plain)
             }

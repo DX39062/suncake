@@ -2,6 +2,40 @@ import Foundation
 import CoreFoundation
 
 struct UrlAnalyzer {
+    static let shared = UrlAnalyzer()
+    private init() {}
+
+    func fetchHtml(url urlStr: String, source: BookSource? = nil) async throws -> String {
+        let request: URLRequest
+        if let source = source {
+            request = try await UrlAnalyzer.getRequest(urlStr: urlStr, source: source)
+        } else {
+            guard let url = URL(string: urlStr) else { throw URLError(.badURL) }
+            request = URLRequest(url: url)
+        }
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+        
+        // 尝试解析编码
+        var encoding = String.Encoding.utf8
+        if let contentType = httpResponse.allHeaderFields["Content-Type"] as? String {
+            if contentType.lowercased().contains("gbk") || contentType.lowercased().contains("gb2312") {
+                encoding = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringConvertIANACharSetNameToEncoding("GBK" as CFString)))
+            }
+        }
+        
+        if let html = String(data: data, encoding: encoding) {
+            return html
+        } else if let html = String(data: data, encoding: .utf8) {
+            return html
+        }
+        
+        throw URLError(.cannotDecodeContentData)
+    }
+
     static func getRequest(urlStr: String, keyword: String? = nil, source: BookSource) async throws -> URLRequest {
         print("DEBUG ANALYZER: 收到规则 -> \(urlStr)")
         var ruleUrl = urlStr
