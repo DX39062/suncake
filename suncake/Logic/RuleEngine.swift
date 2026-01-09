@@ -390,6 +390,35 @@ class WebBook {
         }
         return books
     }
+    
+    static func getContent(source: BookSource, chapterUrl: String) async throws -> String {
+        print("DEBUG RULE: Fetching content from \(chapterUrl)")
+        let html = try await UrlAnalyzer.shared.fetchHtml(url: chapterUrl, source: source)
+        print("DEBUG RULE: Fetched HTML length: \(html.count)")
+        let engine = RuleEngine(source: source)
+        
+        // 1. 获取正文内容
+        var contentRule = source.ruleContent?.content ?? ""
+        print("DEBUG RULE: Content rule: \(contentRule)")
+        
+        // 如果规则没有指定动作（如 @text, @html），默认追加 @html 以保留格式（换行等），
+        // 交由 ContentProcessor 清洗
+        if !contentRule.isEmpty && !contentRule.contains("@") && !contentRule.contains("js:") {
+            contentRule += "@html"
+            print("DEBUG RULE: Modified content rule: \(contentRule)")
+        }
+        
+        var content = engine.text(element: html, ruleStr: contentRule)
+        print("DEBUG RULE: Extracted content length: \(content.count)")
+        
+        // 2. 如果内容为空，尝试 fallback 或者直接返回 html body (视情况而定)
+        if content.isEmpty && source.ruleContent?.content == nil {
+             // 如果没有规则，暂不处理，避免显示乱码
+             print("DEBUG RULE: Content empty and no rule.")
+        }
+        
+        return content
+    }
 }
 
 class SearchModel {

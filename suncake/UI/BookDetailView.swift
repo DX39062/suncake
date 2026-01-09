@@ -61,19 +61,9 @@ struct BookDetailView: View {
                                     .padding(.vertical, 4)
                                     .listRowBackground(Color.gray.opacity(0.1))
                             } else {
-                                Button(action: {
-                                    // TODO: 点击跳转阅读器
-                                    print("阅读章节: \(chapter.title)")
-                                }) {
-                                    HStack {
-                                        Text(chapter.title)
-                                        Spacer()
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
+                                NavigationLink(destination: ReaderView(source: source, chapters: viewModel.chapters, initialIndex: chapter.index)) {
+                                    Text(chapter.title)
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
                     }

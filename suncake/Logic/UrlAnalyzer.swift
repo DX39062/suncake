@@ -74,6 +74,15 @@ struct UrlAnalyzer {
         if request.value(forHTTPHeaderField: "User-Agent") == nil {
             request.addValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36", forHTTPHeaderField: "User-Agent")
         }
+        
+        // Add Referer if not present
+        if request.value(forHTTPHeaderField: "Referer") == nil {
+            if let host = url.host {
+                let scheme = url.scheme ?? "http"
+                request.addValue("\(scheme)://\(host)", forHTTPHeaderField: "Referer")
+            }
+        }
+        
         return request
     }
     
