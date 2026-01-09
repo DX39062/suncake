@@ -84,7 +84,12 @@ struct SettingsPlaceholderView: View {
     }
 }
 
-// MARK: - Search View (Restored due to project file missing reference)
+#Preview {
+    MainView()
+        .environmentObject(SourceStore())
+}
+
+// MARK: - Search View
 
 struct SearchView: View {
     @EnvironmentObject var sourceStore: SourceStore
@@ -108,9 +113,7 @@ struct SearchView: View {
                 Button("搜索") {
                     print("DEBUG UI: 开始执行搜索点击事件")
                     print("DEBUG UI: 启用的书源数量为: \(sourceStore.sources.filter { $0.enabled }.count)")
-                    Task {
-                        performSearch()
-                    }
+                    performSearch()
                 }
                 .disabled(searchText.isEmpty || isSearching)
                 .keyboardShortcut(.defaultAction)
@@ -131,10 +134,8 @@ struct SearchView: View {
             // Content
             if searchResults.isEmpty {
                 if isSearching {
-                    // While searching but empty results so far, show nothing or loading state
                     Spacer()
                 } else {
-                    // Not searching, empty results
                     VStack {
                         Spacer()
                         Image(systemName: "magnifyingglass")
@@ -152,7 +153,6 @@ struct SearchView: View {
                     BookRowView(book: book)
                         .contextMenu {
                             Button {
-                                // Action to add to shelf
                                 print("Add \(book.name) to shelf")
                             } label: {
                                 Label("加入书架", systemImage: "plus.circle")
@@ -166,37 +166,21 @@ struct SearchView: View {
     }
     
     private func performSearch() {
-        print("DEBUG UI: performSearch called")
-        guard !searchText.isEmpty else {
-            print("DEBUG UI: searchText is empty")
-            return
-        }
+        guard !searchText.isEmpty else { return }
         
-        // Reset state
         isSearching = true
         searchResults = []
-        
-        // Get enabled sources
         let enabledSources = sourceStore.sources.filter { $0.enabled }
-        print("DEBUG UI: enabledSources count: \(enabledSources.count)")
         
-        // Start search stream
         Task {
-            print("DEBUG UI: Inside Task, calling searchModel.search")
             let stream = await searchModel.search(keyword: searchText, sources: enabledSources)
-            print("DEBUG UI: Got stream, starting iteration")
-            
             for await books in stream {
-                print("DEBUG UI: Received \(books.count) books")
                 await MainActor.run {
                     self.searchResults.append(contentsOf: books)
                 }
             }
-            
-            print("DEBUG UI: Stream finished")
             await MainActor.run {
                 self.isSearching = false
-                print("DEBUG UI: Search finished, isSearching = false")
             }
         }
     }
@@ -207,67 +191,31 @@ struct BookRowView: View {
     
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            // Cover Image
             AsyncImage(url: URL(string: book.coverUrl ?? "")) { phase in
                 switch phase {
-                case .empty:
-                    Color.secondary.opacity(0.2)
-                case .success(let image):
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                case .failure:
-                    Color.secondary.opacity(0.2)
-                        .overlay(
-                            Image(systemName: "book.closed")
-                                .foregroundColor(.secondary)
-                        )
-                @unknown default:
-                    Color.secondary.opacity(0.2)
+                case .empty: Color.secondary.opacity(0.2)
+                case .success(let image): image.resizable().aspectRatio(contentMode: .fill)
+                case .failure: Color.secondary.opacity(0.2).overlay(Image(systemName: "book.closed").foregroundColor(.secondary))
+                @unknown default: Color.secondary.opacity(0.2)
                 }
             }
             .frame(width: 50, height: 70)
             .cornerRadius(4)
             .clipped()
             
-            // Info
             VStack(alignment: .leading, spacing: 4) {
-                Text(book.name)
-                    .font(.headline)
-                    .lineLimit(1)
-                
-                Text(book.author)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                
+                Text(book.name).font(.headline).lineLimit(1)
+                Text(book.author).font(.subheadline).foregroundColor(.secondary).lineLimit(1)
                 Spacer()
-                
                 HStack {
-                    Text(book.originName)
-                        .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.blue.opacity(0.1))
-                        .foregroundColor(.blue)
-                        .cornerRadius(4)
-                    
+                    Text(book.originName).font(.caption).padding(.horizontal, 6).padding(.vertical, 2).background(Color.blue.opacity(0.1)).foregroundColor(.blue).cornerRadius(4)
                     if let kind = book.kind {
-                        Text(kind)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                        Text(kind).font(.caption).foregroundColor(.secondary).lineLimit(1)
                     }
-                    
                     Spacer()
                 }
             }
         }
         .padding(.vertical, 4)
     }
-}
-
-#Preview {
-    MainView()
-        .environmentObject(SourceStore())
 }
