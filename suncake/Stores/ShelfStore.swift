@@ -106,4 +106,39 @@ class ShelfStore: ObservableObject {
             saveBooks()
         }
     }
+    
+    // MARK: - Chapter Cache
+    
+    private func getChaptersUrl(bookUrl: String) -> URL? {
+        guard let docDir = getDocumentsDirectory() else { return nil }
+        // Create a 'chapters' subdirectory if it doesn't exist
+        let chaptersDir = docDir.appendingPathComponent("chapters")
+        if !FileManager.default.fileExists(atPath: chaptersDir.path) {
+            try? FileManager.default.createDirectory(at: chaptersDir, withIntermediateDirectories: true)
+        }
+        
+        // Use a safe filename (hash of the url)
+        let safeName = String(bookUrl.hashValue) 
+        return chaptersDir.appendingPathComponent("\(safeName).json")
+    }
+    
+    func saveChapters(bookUrl: String, chapters: [Book.Chapter]) {
+        guard let url = getChaptersUrl(bookUrl: bookUrl) else { return }
+        do {
+            let data = try JSONEncoder().encode(chapters)
+            try data.write(to: url)
+        } catch {
+            print("ShelfStore: Error saving chapters: \(error)")
+        }
+    }
+    
+    func loadChapters(bookUrl: String) -> [Book.Chapter]? {
+        guard let url = getChaptersUrl(bookUrl: bookUrl) else { return nil }
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode([Book.Chapter].self, from: data)
+        } catch {
+            return nil
+        }
+    }
 }

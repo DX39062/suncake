@@ -54,6 +54,32 @@ struct BookDetailView: View {
                         }
                     }
                     
+                    // Continue Reading Button
+                    if shelfStore.inShelf(viewModel.book.bookUrl) && !viewModel.chapters.isEmpty {
+                        Section {
+                            NavigationLink(destination: ReaderView(bookId: viewModel.book.bookUrl, source: source, chapters: viewModel.chapters, initialIndex: viewModel.book.durChapterIndex)) {
+                                HStack {
+                                    Image(systemName: "book.fill")
+                                        .foregroundColor(.accentColor)
+                                    VStack(alignment: .leading) {
+                                        Text("继续阅读")
+                                            .font(.headline)
+                                        if let title = viewModel.book.durChapterTitle {
+                                            Text("上次读到: \(title)")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        } else {
+                                            Text("开始阅读")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        }
+                    }
+                    
                     Section(header: Text("目录 (共 \(viewModel.chapters.count) 章)")) {
                         ForEach(viewModel.chapters) { chapter in
                             if chapter.isVolume {
@@ -98,7 +124,7 @@ struct BookDetailView: View {
                 if let intro = cachedBook.intro { viewModel.intro = intro }
             }
             
-            await viewModel.loadDetails()
+            await viewModel.loadDetails(shelfStore: shelfStore)
             
             // If in shelf, update shelf with latest details
             if shelfStore.inShelf(viewModel.book.bookUrl) {

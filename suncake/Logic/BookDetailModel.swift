@@ -17,8 +17,22 @@ class BookDetailModel: ObservableObject {
         self.ruleEngine = RuleEngine(source: source)
     }
     
-    func loadDetails() async {
+    func loadDetails(shelfStore: ShelfStore? = nil) async {
         await MainActor.run { isLoading = true }
+        
+        // 1. Try to load cached chapters first if shelfStore is provided
+        if let store = shelfStore {
+             if let cached = store.loadChapters(bookUrl: book.bookUrl), !cached.isEmpty {
+                 await MainActor.run {
+                     self.chapters = cached
+                     self.isLoading = false
+                 }
+                 print("DEBUG TOC: Loaded \(cached.count) chapters from local cache.")
+                 // Can choose to return here or continue to background refresh
+                 // For now, let's return to satisfy "don't re-parse every time"
+                 return 
+             }
+        }
         
         do {
             print("DEBUG TOC: Starting loadDetails for \(book.name), url: \(book.bookUrl)")
@@ -102,6 +116,11 @@ class BookDetailModel: ObservableObject {
             
             if parsedChapters.isEmpty && !chapterListRule.isEmpty {
                 print("DEBUG TOC: WARNING! Parsed chapters is empty but rule was not empty.")
+            }
+            
+            // Cache chapters if parsing succeeded
+            if !parsedChapters.isEmpty {
+                shelfStore?.saveChapters(bookUrl: book.bookUrl, chapters: parsedChapters)
             }
             
             await MainActor.run {
